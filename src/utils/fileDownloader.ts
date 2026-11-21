@@ -1,20 +1,24 @@
 /**
  * Triggers a direct download of a Blob file in the browser / mobile phone
  */
-export function downloadFile(blob: Blob, filename: string) {
+export function downloadFile(blob: Blob, filename: string): string {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.style.display = 'none';
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
+
   document.body.appendChild(a);
   a.click();
 
-  // Cleanup
   setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      document.body.removeChild(a);
+    } catch (_) {}
   }, 1000);
+
+  return url;
 }
 
 /**
@@ -47,17 +51,14 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Generates an automatic clean name for CRM audio
+ * Formats timestamps to friendly date time (e.g. "20 nov, 10:15 pm")
  */
-export function generateAudioFilename(originalName: string | null, format: 'ogg' | 'mp3' | 'wav'): string {
-  const now = new Date();
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  const dateStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
-
-  if (!originalName) {
-    return `nota_voz_crm_${dateStr}.${format}`;
-  }
-
-  const baseName = originalName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_\-]/g, '_');
-  return `${baseName}_crm.${format}`;
+export function formatDate(timestamp: number): string {
+  const d = new Date(timestamp);
+  return d.toLocaleDateString('es-ES', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }

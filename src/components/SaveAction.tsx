@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, CheckCircle2, Loader2, RotateCcw, FileAudio } from 'lucide-react';
+import { Download, CheckCircle2, Loader2, RotateCcw, FileAudio, FolderHeart } from 'lucide-react';
 import { formatBytes } from '../utils/fileDownloader';
 
 interface SaveActionProps {
@@ -11,8 +11,10 @@ interface SaveActionProps {
     name: string;
     size: number;
     format: string;
+    blobUrl?: string;
   } | null;
   onReset: () => void;
+  onGoToHistory?: () => void;
 }
 
 export const SaveAction: React.FC<SaveActionProps> = ({
@@ -22,6 +24,7 @@ export const SaveAction: React.FC<SaveActionProps> = ({
   onConvertAndSave,
   savedFile,
   onReset,
+  onGoToHistory,
 }) => {
   return (
     <div className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col items-center">
@@ -53,13 +56,13 @@ export const SaveAction: React.FC<SaveActionProps> = ({
           </div>
 
           <h4 className="text-base font-bold text-white mb-1">
-            ¡Audio Guardado en tu Teléfono!
+            ¡Audio Listo y Guardado!
           </h4>
-          <p className="text-xs text-slate-300 mb-4 max-w-sm">
-            El archivo se guardó en tu carpeta de <strong>Descargas / Archivos</strong>. Ya puedes entrar a tu CRM y subirlo como archivo adjunto.
+          <p className="text-xs text-slate-300 mb-3 max-w-sm">
+            Guardado en <strong>Mis Audios</strong>. Toca el botón para descargarlo a los archivos de tu móvil y adjuntarlo en tu CRM.
           </p>
 
-          <div className="w-full bg-slate-950/80 rounded-xl p-3 border border-slate-800 flex items-center justify-between mb-5 text-xs">
+          <div className="w-full bg-slate-950/80 rounded-xl p-3 border border-slate-800 flex items-center justify-between mb-4 text-xs">
             <div className="flex items-center gap-2 overflow-hidden">
               <FileAudio className="w-5 h-5 text-sky-400 shrink-0" />
               <span className="font-mono text-slate-200 truncate">{savedFile.name}</span>
@@ -69,21 +72,43 @@ export const SaveAction: React.FC<SaveActionProps> = ({
             </span>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2.5 w-full">
+          {/* Botón de descarga directa con tag <a> para compatibilidad 100% móvil */}
+          {savedFile.blobUrl ? (
+            <a
+              href={savedFile.blobUrl}
+              download={savedFile.name}
+              className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold text-sm shadow-lg shadow-emerald-500/20 active:scale-98 transition-all flex items-center justify-center gap-2 hover:brightness-110 mb-3"
+            >
+              <Download className="w-5 h-5" />
+              <span>📥 Descargar Archivo en el Teléfono</span>
+            </a>
+          ) : (
             <button
               onClick={onConvertAndSave}
-              className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-medium text-xs flex items-center justify-center gap-2 active:scale-95 transition-all"
+              className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold text-sm shadow-lg shadow-emerald-500/20 active:scale-98 transition-all flex items-center justify-center gap-2 hover:brightness-110 mb-3"
             >
-              <Download className="w-4 h-4 text-sky-400" />
-              <span>Volver a Descargar</span>
+              <Download className="w-5 h-5" />
+              <span>📥 Descargar Archivo en el Teléfono</span>
             </button>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-2.5 w-full">
+            {onGoToHistory && (
+              <button
+                onClick={onGoToHistory}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sky-400 font-medium text-xs flex items-center justify-center gap-2 active:scale-95 transition-all"
+              >
+                <FolderHeart className="w-4 h-4" />
+                <span>Ver en Mis Audios</span>
+              </button>
+            )}
 
             <button
               onClick={onReset}
-              className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-500 text-white font-semibold text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg shadow-sky-500/20 hover:brightness-110"
+              className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium text-xs flex items-center justify-center gap-2 active:scale-95 transition-all"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>Convertir Otro Audio</span>
+              <span>Grabar / Convertir Otro</span>
             </button>
           </div>
         </div>
@@ -94,10 +119,10 @@ export const SaveAction: React.FC<SaveActionProps> = ({
             className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-sky-500 via-sky-600 to-cyan-500 text-white font-bold text-base shadow-xl shadow-sky-500/25 active:scale-98 transition-all flex items-center justify-center gap-2.5 hover:brightness-110"
           >
             <Download className="w-5 h-5" />
-            <span>Guardar en el Teléfono</span>
+            <span>Convertir y Guardar en el Teléfono</span>
           </button>
           <span className="text-[11px] text-slate-400 mt-2 text-center">
-            Se descargará directamente en tu móvil listo para adjuntar en tu CRM
+            Se descargará en tu teléfono y quedará en tu historial de Mis Audios
           </span>
         </div>
       )}

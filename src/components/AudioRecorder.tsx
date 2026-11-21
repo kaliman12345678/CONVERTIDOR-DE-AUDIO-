@@ -18,6 +18,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
   const timerIntervalRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // References to avoid React state closure stale values
+  const startTimeRef = useRef<number>(0);
+  const elapsedTimeRef = useRef<number>(0);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -97,26 +101,39 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
       streamRef.current = stream;
 
       // Setup Web Audio Analyser for live visualizer
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      audioContextRef.current = audioCtx;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 64;
-      source.connect(analyser);
-      analyserRef.current = analyser;
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        audioContextRef.current = audioCtx;
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        analyserRef.current = analyser;
 
-      drawVisualizer();
+        drawVisualizer();
+      } catch (e) {
+        console.warn('Audio visualizer init error:', e);
+      }
 
-      // Setup MediaRecorder
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        if (MediaRecorder.isTypeSupported('audio/mp4')) {
-          mimeType = 'audio/mp4';
-        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
-          mimeType = 'audio/ogg';
-        } else {
-          mimeType = '';
+      // Setup MediaRecorder with best supported mimeType
+      let mimeType = '';
+      if (typeof MediaRecorder !== 'undefined') {
+        const types = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+          'audio/mp4',
+          'audio/aac'
+        ];
+        for (const t of types) {
+          if (MediaRecorder.isTypeSupported(t)) {
+            mimeType = t;
+            break;
+          }
         }
       }
 
@@ -132,32 +149,41 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
 
       recorder.onstop = () => {
         const fullBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        const finalDuration = elapsedTimeRef.current > 0
+          ? elapsedTimeRef.current
+          : (Date.now() - startTimeRef.current) / 1000;
+
         cleanupStream();
         setIsRecording(false);
         setIsPaused(false);
-        if (elapsedTime > 0.5) {
-          onAudioRecorded(fullBlob, elapsedTime);
+
+        if (fullBlob.size > 0) {
+          onAudioRecorded(fullBlob, Math.max(0.5, finalDuration));
         } else {
-          setErrorMsg('La grabación fue muy corta. Intenta de nuevo.');
+          setErrorMsg('No se capturó audio del micrófono. Revisa los permisos e intenta de nuevo.');
         }
       };
 
-      recorder.start(250); // Collect every 250ms
+      startTimeRef.current = Date.now();
+      elapsedTimeRef.current = 0;
+      setElapsedTime(0);
       setIsRecording(true);
       setIsPaused(false);
-      setElapsedTime(0);
+
+      recorder.start(200); // Collect slice every 200ms
 
       timerIntervalRef.current = window.setInterval(() => {
-        setElapsedTime((prev) => prev + 0.1);
+        elapsedTimeRef.current += 0.1;
+        setElapsedTime(elapsedTimeRef.current);
       }, 100);
 
     } catch (err: unknown) {
       console.error('Error al acceder al micrófono:', err);
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('NotAllowedError') || msg.includes('Permission')) {
-        setErrorMsg('Permiso de micrófono denegado. Permite el acceso para grabar tu voz.');
+        setErrorMsg('Permiso de micrófono denegado. Permite el acceso al micrófono en tu navegador para grabar.');
       } else {
-        setErrorMsg('No se pudo acceder al micrófono: ' + msg);
+        setErrorMsg('No se pudo iniciar la grabación: ' + msg);
       }
     }
   };
@@ -168,7 +194,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
         mediaRecorderRef.current.resume();
         setIsPaused(false);
         timerIntervalRef.current = window.setInterval(() => {
-          setElapsedTime((prev) => prev + 0.1);
+          elapsedTimeRef.current += 0.1;
+          setElapsedTime(elapsedTimeRef.current);
         }, 100);
       } else {
         mediaRecorderRef.current.pause();
@@ -191,6 +218,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
     setIsRecording(false);
     setIsPaused(false);
     setElapsedTime(0);
+    elapsedTimeRef.current = 0;
     audioChunksRef.current = [];
     if (onCancel) onCancel();
   };
@@ -216,7 +244,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
           </button>
           <span className="text-sm font-semibold text-white">Toca para Grabar</span>
           <span className="text-xs text-slate-400 mt-1 max-w-xs">
-            Graba notas de voz directamente desde el micrófono de tu teléfono para enviarlas a tu CRM
+            Graba notas de voz de cualquier duración para tu CRM
           </span>
         </div>
       ) : (
@@ -245,7 +273,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onAudioRecorded, o
           </div>
 
           {/* Botones de control durante grabación */}
-          <div className="flex items-center justify-center gap-4 w-full">
+          <div className="flex items-center justify-center gap-3 w-full">
             <button
               onClick={cancelRecording}
               className="p-3.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 active:scale-95 transition-all flex items-center gap-1.5 text-xs font-medium"

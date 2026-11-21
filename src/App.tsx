@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { AudioRecorder } from './components/AudioRecorder';
 import { AudioUploader } from './components/AudioUploader';
 import { WaveformEditor } from './components/WaveformEditor';
 import { ConversionControls } from './components/ConversionControls';
 import { SaveAction } from './components/SaveAction';
+import { AudioHistory } from './components/AudioHistory';
 import { AudioFormat, TrimRange } from './types/audio';
 import {
   decodeAudioFile,
@@ -14,11 +15,13 @@ import {
 import { encodeAudioBufferToOgg } from './utils/oggEncoder';
 import { encodeAudioBufferToMp3 } from './utils/mp3Encoder';
 import { encodeAudioBufferToWav } from './utils/wavEncoder';
-import { downloadFile, generateAudioFilename, formatBytes } from './utils/fileDownloader';
-import { Mic, UploadCloud, RotateCcw, AlertTriangle, FileAudio } from 'lucide-react';
+import { downloadFile, formatBytes } from './utils/fileDownloader';
+import { saveAudioToHistory, getAudioHistory, SavedAudio } from './utils/audioStorage';
+import { Mic, UploadCloud, RotateCcw, AlertTriangle, FileAudio, FolderOpen } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
+  const [activeTab, setActiveTab] = useState<'record' | 'upload' | 'history'>('record');
+  const [historyCount, setHistoryCount] = useState<number>(0);
 
   // Loaded Audio State
   const [originalBlob, setOriginalBlob] = useState<Blob | null>(null);
@@ -46,7 +49,20 @@ export const App: React.FC = () => {
     name: string;
     size: number;
     format: string;
+    blobUrl?: string;
   } | null>(null);
+
+  // Load history count on mount
+  useEffect(() => {
+    updateHistoryCount();
+  }, []);
+
+  const updateHistoryCount = async () => {
+    try {
+      const items = await getAudioHistory();
+      setHistoryCount(items.length);
+    } catch (_) {}
+  };
 
   // Handle file upload
   const handleFileSelected = async (file: File) => {
@@ -80,8 +96,9 @@ export const App: React.FC = () => {
       const buffer = await decodeAudioFile(blob);
       setOriginalBlob(blob);
       setAudioBuffer(buffer);
-      setDuration(buffer.duration || recDuration);
-      setTrimRange({ start: 0, end: buffer.duration || recDuration });
+      const audioDuration = buffer.duration || recDuration;
+      setDuration(audioDuration);
+      setTrimRange({ start: 0, end: audioDuration });
       setIsTrimmed(false);
 
       const now = new Date();
@@ -93,6 +110,32 @@ export const App: React.FC = () => {
     } catch (err: unknown) {
       console.error('Error al decodificar grabación:', err);
       setErrorMsg('Error al procesar la grabación del micrófono. Intenta de nuevo.');
+    } finally {
+      setIsLoadingAudio(false);
+    }
+  };
+
+  // Handle selecting an audio from history to re-edit
+  const handleSelectFromHistory = async (item: SavedAudio) => {
+    setIsLoadingAudio(true);
+    setErrorMsg(null);
+    try {
+      const buffer = await decodeAudioFile(item.blob);
+      setOriginalBlob(item.blob);
+      setAudioBuffer(buffer);
+      setDuration(buffer.duration || item.duration);
+      setTrimRange({ start: 0, end: buffer.duration || item.duration });
+      setIsTrimmed(false);
+
+      const baseName = item.name.replace(/\.[^/.]+$/, '');
+      setAudioName(item.name);
+      setCustomFilename(`${baseName}_editado`);
+      setSelectedFormat(item.format);
+      setSavedFile(null);
+      setActiveTab('record');
+    } catch (err: unknown) {
+      console.error('Error al cargar audio del historial:', err);
+      setErrorMsg('No se pudo abrir el audio para edición.');
     } finally {
       setIsLoadingAudio(false);
     }
@@ -116,7 +159,7 @@ export const App: React.FC = () => {
     setErrorMsg(null);
   };
 
-  // Convert & Save Directly to Phone
+  // Convert & Save Directly to Phone and to "Mis Audios" History
   const handleConvertAndSave = async () => {
     if (!audioBuffer) return;
 
@@ -162,20 +205,32 @@ export const App: React.FC = () => {
         });
       }
 
-      setConversionProgress(0.95);
-      setConversionStatus('Guardando en tu teléfono...');
+      setConversionProgress(0.9);
+      setConversionStatus('Guardando en tu teléfono y en Mis Audios...');
 
-      // 4. Download directly to device
       const cleanName = (customFilename.trim() || 'audio_crm').replace(/\.[^/.]+$/, '');
       const finalFilename = `${cleanName}.${targetFormat}`;
 
-      downloadFile(resultBlob, finalFilename);
+      // Save to IndexedDB history
+      await saveAudioToHistory({
+        name: finalFilename,
+        date: Date.now(),
+        duration: processedBuffer.duration,
+        format: targetFormat,
+        size: resultBlob.size,
+        blob: resultBlob
+      });
+      await updateHistoryCount();
+
+      // Trigger browser download and get blob url
+      const blobUrl = downloadFile(resultBlob, finalFilename);
 
       setConversionProgress(1);
       setSavedFile({
         name: finalFilename,
         size: resultBlob.size,
-        format: targetFormat
+        format: targetFormat,
+        blobUrl: blobUrl
       });
 
     } catch (err: unknown) {
@@ -191,7 +246,7 @@ export const App: React.FC = () => {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       <Header />
 
-      <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col gap-5 pb-16">
+      <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col gap-4 pb-16">
         {/* Error notification */}
         {errorMsg && (
           <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2.5">
@@ -209,52 +264,83 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Initial Screen: Tabs for Record or Upload */}
+        {/* Navigation Tabs (Grabar, Subir, Mis Audios) */}
         {!audioBuffer && !isLoadingAudio && (
           <div className="flex flex-col gap-4">
-            {/* Tabs selector */}
-            <div className="grid grid-cols-2 p-1 bg-slate-900 border border-slate-800 rounded-xl">
+            <div className="grid grid-cols-3 p-1 bg-slate-900 border border-slate-800 rounded-xl">
               <button
                 onClick={() => setActiveTab('record')}
-                className={`py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                className={`py-2 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   activeTab === 'record'
                     ? 'bg-sky-500 text-white shadow-md shadow-sky-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Mic className="w-4 h-4" />
-                <span>Grabar Nota de Voz</span>
+                <Mic className="w-3.5 h-3.5" />
+                <span className="truncate">Grabar</span>
               </button>
 
               <button
                 onClick={() => setActiveTab('upload')}
-                className={`py-2.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                className={`py-2 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   activeTab === 'upload'
                     ? 'bg-sky-500 text-white shadow-md shadow-sky-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <UploadCloud className="w-4 h-4" />
-                <span>Subir Audio Existente</span>
+                <UploadCloud className="w-3.5 h-3.5" />
+                <span className="truncate">Subir</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('history');
+                  updateHistoryCount();
+                }}
+                className={`py-2 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all relative ${
+                  activeTab === 'history'
+                    ? 'bg-sky-500 text-white shadow-md shadow-sky-500/20'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span className="truncate">Mis Audios</span>
+                {historyCount > 0 && (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    activeTab === 'history' ? 'bg-white text-sky-600' : 'bg-slate-800 text-sky-400'
+                  }`}>
+                    {historyCount}
+                  </span>
+                )}
               </button>
             </div>
 
-            {/* Tab Content */}
-            {activeTab === 'record' ? (
+            {/* Tab Views */}
+            {activeTab === 'record' && (
               <AudioRecorder onAudioRecorded={handleAudioRecorded} />
-            ) : (
+            )}
+
+            {activeTab === 'upload' && (
               <AudioUploader onFileSelected={handleFileSelected} />
             )}
 
-            {/* Quick CRM Info Card */}
-            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60 text-xs text-slate-400 flex flex-col gap-2">
-              <span className="font-semibold text-slate-200 flex items-center gap-1.5">
-                💡 ¿Por qué convertir a OGG para tu CRM?
-              </span>
-              <p className="leading-relaxed">
-                Plataformas como HubSpot, Kommo/AmoCRM, Zoho, Bitrix24 y WhatsApp requieren audios en formato <strong>.OGG Opus</strong> para mostrarlos con reproductor interactivo de notas de voz. Si subes un .m4a o .wav grande, muchos CRMs no lo reproducen o tardan en cargar.
-              </p>
-            </div>
+            {activeTab === 'history' && (
+              <AudioHistory
+                onSelectForEdit={handleSelectFromHistory}
+                onGoToRecord={() => setActiveTab('record')}
+              />
+            )}
+
+            {activeTab !== 'history' && (
+              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60 text-xs text-slate-400 flex flex-col gap-1.5">
+                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  💡 ¿Por qué convertir a OGG para tu CRM?
+                </span>
+                <p className="leading-relaxed">
+                  HubSpot, Kommo, Zoho, Bitrix24 y WhatsApp requieren audios en <strong>.OGG Opus</strong> para reproducirlos con barra interactiva de notas de voz.
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -309,7 +395,7 @@ export const App: React.FC = () => {
               onToggleMono={() => setMonoForCRM(!monoForCRM)}
             />
 
-            {/* Save directly to phone */}
+            {/* Save directly to phone & history */}
             <SaveAction
               isConverting={isConverting}
               conversionProgress={conversionProgress}
@@ -317,6 +403,11 @@ export const App: React.FC = () => {
               onConvertAndSave={handleConvertAndSave}
               savedFile={savedFile}
               onReset={handleResetAll}
+              onGoToHistory={() => {
+                handleResetAll();
+                setActiveTab('history');
+                updateHistoryCount();
+              }}
             />
           </div>
         )}
