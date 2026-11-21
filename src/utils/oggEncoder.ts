@@ -21,7 +21,8 @@ export function encodeAudioBufferToOgg(
       const numChannels = bufferToEncode.numberOfChannels;
       const length = bufferToEncode.length;
 
-      const worker = new Worker('/encoderWorker.min.js');
+      const workerUrl = (import.meta.env.BASE_URL || './').replace(/\/$/, '') + '/encoderWorker.min.js';
+      const worker = new Worker(workerUrl);
       const pages: Uint8Array[] = [];
 
       worker.onmessage = (e) => {
